@@ -1,0 +1,19 @@
+[Unit]
+Description=ARC SPY Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/arc-spy-bot
+EnvironmentFile=/path/to/arc-spy-bot/.env
+ExecStart=/path/to/arc-spy-bot/.venv/bin/python public-bot.py
+Restart=always
+RestartSec=10
+
+# Security hardening (optional)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
