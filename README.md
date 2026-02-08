@@ -189,7 +189,7 @@ Contributions welcome! Please:
 ---
 
 ## License
-See `LICENSE` (MIT recommended for maximum permissiveness).
+See `LICENSE`.
 
 ---
 
