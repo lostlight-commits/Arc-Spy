@@ -14,7 +14,6 @@ It pulls live data from the MetaForge ARC Raiders API and formats event end-time
 - **Per-server panel**: `/set_event_panel` posts a panel message in the current channel and stores the channel/message IDs in `guild_config.json`.
 - **Auto updater**: background task refreshes panels every ~5 minutes.
 - **Blueprint browser**: `/blueprints` (ephemeral) browses your CSV intel with Next/Prev buttons.
-- **Item enrichment**: caches `/items` so blueprint pages can show icons/rarity/description.
 
 ---
 
