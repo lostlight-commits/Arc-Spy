@@ -168,7 +168,6 @@ arc-spy-bot/
 ├── public-bot.py                        # Main bot code
 ├── arc_raiders_blueprints_final.csv    # Blueprint intel dataset
 ├── guild_config.json                   # Auto-generated per-guild config
-├── .env                                # Your secrets (DO NOT COMMIT)
 ├── .env.example                        # Template
 ├── requirements.txt                    # Python dependencies
 ├── README.md                           # This file
