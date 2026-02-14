@@ -169,11 +169,6 @@ arc-spy-bot/
 ├── guild_config.json                   # Auto-generated per-guild config
 ├── .env.example                        # Template
 ├── requirements.txt                    # Python dependencies
-├── README.md                           # This file
-├── LICENSE                             # MIT or Apache-2.0
-└── .github/
-    └── workflows/
-        └── ci.yml                      # Lint + format check
 ```
 
 ---
