@@ -4,6 +4,7 @@ ARC SPY is a public Discord bot that:
 - Posts and **auto-updates** an "ACTIVE Events" embed panel per server (guild).
 - Lets server admins create/remove that panel via slash commands or prefix commands.
 - Lets users browse "blueprint intel" from a CSV dataset (paged UI).
+- Refreshes many guild panels with bounded parallelism so one slow server does not stall the rest.
 
 It pulls live data from the MetaForge ARC Raiders API and formats event end-times using Discord timestamps (e.g. `<t:UNIX:t>` for time-only).
 
@@ -72,7 +73,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -U pip
 pip install -r requirements.txt
 
-python public-bot.py
+python bot.py
 ```
 
 ---
@@ -98,6 +99,7 @@ Prefix: `A$`
 
 ### `guild_config.json`
 Created/updated automatically.
+Writes are atomic and lock-protected so concurrent updates do not clobber each other.
 Format:
 ```json
 {
@@ -121,6 +123,8 @@ Expected columns:
 ### Recommended
 - Linux VPS (systemd), Docker, or a platform with persistent disk (so `guild_config.json` survives restarts).
 - Consider using a process manager like systemd, PM2, or supervisor for auto-restart.
+- A single bot process can serve many Discord servers at once. Do not run multiple live gateway clients with the same bot token.
+- Tune `PANEL_UPDATE_CONCURRENCY` if you want faster or gentler panel fanout; the default is `8`.
 
 ### systemd example (sketch)
 Create `/etc/systemd/system/arcspy.service`:
@@ -134,7 +138,7 @@ Type=simple
 User=youruser
 WorkingDirectory=/path/to/bot
 EnvironmentFile=/path/to/bot/.env
-ExecStart=/path/to/bot/.venv/bin/python public-bot.py
+ExecStart=/path/to/bot/.venv/bin/python bot.py
 Restart=always
 RestartSec=10
 
@@ -151,6 +155,7 @@ sudo systemctl start arcspy
 
 ### Important
 - If your host is **ephemeral** (disk resets), you'll lose `guild_config.json` unless you mount persistent storage.
+- If you intentionally run multiple deployments, use distinct bot tokens/applications. Shared config writes are protected, but Discord does not support duplicate live clients for one token.
 
 ---
 
@@ -164,7 +169,7 @@ sudo systemctl start arcspy
 ## Project structure
 ```
 arc-spy-bot/
-├── public-bot.py                        # Main bot code
+├── bot.py                               # Main bot code
 ├── arc_raiders_blueprints_final.csv    # Blueprint intel dataset
 ├── guild_config.json                   # Auto-generated per-guild config
 ├── .env.example                        # Template

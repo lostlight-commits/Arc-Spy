@@ -1,22 +1,46 @@
-import discord
-from discord.ext import commands, tasks
+import asyncio
 import aiohttp
-from datetime import datetime, timezone
-import logging
-import os
 import csv
 import json
-from dataclasses import dataclass
-from typing import Optional
+import logging
+import os
+import tempfile
 import traceback
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+import discord
+from discord.ext import commands, tasks
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        return max(minimum, int(raw_value))
+    except ValueError:
+        logger.warning("%s must be an integer, got %r. Using %d.", name, raw_value, default)
+        return default
+
 
 # ---- CONFIG ----
 TOKEN = os.getenv("DISCORD_TOKEN", "REPLACE_ME_REGEN_TOKEN_NOW")
 BLUEPRINTS_CSV_PATH = os.getenv("BLUEPRINTS_CSV_PATH", "./arc_raiders_blueprints_final.csv")
 CONFIG_PATH = os.getenv("GUILD_CONFIG_PATH", "./guild_config.json")
+PANEL_UPDATE_CONCURRENCY = get_env_int("PANEL_UPDATE_CONCURRENCY", 8)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -87,28 +111,134 @@ ITEMS_BY_NAME: dict[str, dict] = {}
 BP_DB: dict[str, "BlueprintInfo"] = {}
 
 # ---- Per-guild panel config ----
-# { "guild_id": { "channel_id": 111, "message_id": 222 } }
-GUILD_CFG: dict[str, dict] = {}
+# Stores { "guild_id": { "channel_id": 111, "message_id": 222 } } with
+# file-level locking so multiple command handlers or bot instances do not race.
+PANEL_UPDATE_LOCK = asyncio.Lock()
 
 
-def load_guild_cfg() -> dict[str, dict]:
-    if not os.path.exists(CONFIG_PATH):
-        return {}
+def normalize_panel(panel: object) -> Optional[dict[str, int]]:
+    if not isinstance(panel, dict):
+        return None
+
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-    except Exception as e:
-        logger.error(f"Failed to read {CONFIG_PATH}: {e}")
-    return {}
+        channel_id = int(panel["channel_id"])
+        message_id = int(panel["message_id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    if channel_id <= 0 or message_id <= 0:
+        return None
+
+    return {"channel_id": channel_id, "message_id": message_id}
 
 
-def save_guild_cfg(cfg: dict[str, dict]):
-    tmp = CONFIG_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, sort_keys=True)
-    os.replace(tmp, CONFIG_PATH)
+def normalize_guild_cfg(data: object) -> dict[str, dict[str, int]]:
+    if not isinstance(data, dict):
+        return {}
+
+    normalized: dict[str, dict[str, int]] = {}
+    for guild_id, panel in data.items():
+        normalized_panel = normalize_panel(panel)
+        if normalized_panel is not None:
+            normalized[str(guild_id)] = normalized_panel
+    return normalized
+
+
+class GuildConfigStore:
+    def __init__(self, path: str):
+        self.path = Path(path)
+        self.lock_path = Path(f"{self.path}.lock")
+        self._lock = asyncio.Lock()
+
+    @contextmanager
+    def _file_lock(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.lock_path, "a+", encoding="utf-8") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _read_unlocked(self) -> dict[str, dict[str, int]]:
+        if not self.path.exists():
+            return {}
+
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            logger.error("Failed to read %s: %s", self.path, e)
+            return {}
+
+        normalized = normalize_guild_cfg(data)
+        if isinstance(data, dict) and len(normalized) != len(data):
+            logger.warning("Skipped malformed guild panel entries while reading %s", self.path)
+        return normalized
+
+    def _write_unlocked(self, cfg: dict[str, dict[str, int]]):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=f"{self.path.name}.",
+            suffix=".tmp",
+            dir=self.path.parent,
+        )
+
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, sort_keys=True)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    async def snapshot(self) -> dict[str, dict[str, int]]:
+        async with self._lock:
+            with self._file_lock():
+                return self._read_unlocked()
+
+    async def set_panel(self, guild_id: int, channel_id: int, message_id: int):
+        async with self._lock:
+            with self._file_lock():
+                cfg = self._read_unlocked()
+                cfg[str(guild_id)] = {"channel_id": channel_id, "message_id": message_id}
+                self._write_unlocked(cfg)
+
+    async def remove_panel(self, guild_id: int) -> bool:
+        async with self._lock:
+            with self._file_lock():
+                cfg = self._read_unlocked()
+                existed = cfg.pop(str(guild_id), None) is not None
+                if existed:
+                    self._write_unlocked(cfg)
+                return existed
+
+    async def remove_matching(self, panels_by_guild: dict[str, dict[str, int]]) -> int:
+        if not panels_by_guild:
+            return 0
+
+        async with self._lock:
+            with self._file_lock():
+                cfg = self._read_unlocked()
+                removed = 0
+
+                for guild_id, stale_panel in panels_by_guild.items():
+                    if cfg.get(guild_id) == stale_panel:
+                        cfg.pop(guild_id, None)
+                        removed += 1
+
+                if removed:
+                    self._write_unlocked(cfg)
+                return removed
+
+
+GUILD_CONFIG_STORE = GuildConfigStore(CONFIG_PATH)
 
 
 # ---- HTTP ----
@@ -396,10 +526,10 @@ bot = ArcSpyBot(
 
 @bot.event
 async def on_ready():
-    global GUILD_CFG
-    GUILD_CFG = load_guild_cfg()
+    guild_cfg = await GUILD_CONFIG_STORE.snapshot()
     logger.info(f"{bot.user} connected! Guilds={len(bot.guilds)}")
     logger.info(f"message_content intent runtime={bot.intents.message_content}")
+    logger.info("Loaded %d guild panel configs from %s", len(guild_cfg), CONFIG_PATH)
 
     if not update_event_panels.is_running():
         update_event_panels.start()
@@ -500,49 +630,68 @@ async def build_active_events_embed() -> discord.Embed:
     return embed
 
 
-@tasks.loop(minutes=5)
-async def update_event_panels():
-    if not GUILD_CFG:
-        return
+async def get_panel_channel(channel_id: int):
+    channel = bot.get_channel(channel_id)
+    if channel is not None:
+        return channel
 
     try:
-        embed = await build_active_events_embed()
-    except Exception as e:
-        logger.error(f"Failed to build events embed: {e}")
-        return
+        return await bot.fetch_channel(channel_id)
+    except (discord.NotFound, discord.Forbidden):
+        return None
+    except discord.HTTPException as e:
+        logger.warning("HTTP error fetching panel channel %s: %s", channel_id, e)
+        return None
 
-    dead_guilds: list[str] = []
 
-    for guild_id, panel in list(GUILD_CFG.items()):
+async def edit_panel_message(channel, message_id: int, embed: discord.Embed):
+    if hasattr(channel, "get_partial_message"):
+        message = channel.get_partial_message(message_id)
+    else:
+        message = await channel.fetch_message(message_id)
+    await message.edit(embed=embed)
+
+
+@tasks.loop(minutes=5)
+async def update_event_panels():
+    async with PANEL_UPDATE_LOCK:
+        guild_cfg = await GUILD_CONFIG_STORE.snapshot()
+        if not guild_cfg:
+            return
+
         try:
-            ch_id = int(panel.get("channel_id", 0))
-            msg_id = int(panel.get("message_id", 0))
-            if not ch_id or not msg_id:
-                continue
-
-            channel = bot.get_channel(ch_id)
-            if channel is None:
-                dead_guilds.append(guild_id)
-                continue
-
-            try:
-                msg = await channel.fetch_message(msg_id)
-                await msg.edit(embed=embed)
-            except discord.NotFound:
-                dead_guilds.append(guild_id)
-            except discord.Forbidden:
-                logger.warning(f"No permission to edit panel in guild {guild_id}")
-            except discord.HTTPException as he:
-                logger.warning(f"HTTP error updating panel in guild {guild_id}: {he}")
-
+            embed = await build_active_events_embed()
         except Exception as e:
-            logger.warning(f"Panel update failure guild={guild_id}: {e}")
+            logger.error(f"Failed to build events embed: {e}")
+            return
 
-    if dead_guilds:
-        for gid in dead_guilds:
-            GUILD_CFG.pop(gid, None)
-        save_guild_cfg(GUILD_CFG)
-        logger.info(f"Cleaned up {len(dead_guilds)} stale guild panels")
+        stale_panels: dict[str, dict[str, int]] = {}
+        semaphore = asyncio.Semaphore(PANEL_UPDATE_CONCURRENCY)
+
+        async def update_one_panel(guild_id: str, panel: dict[str, int]):
+            async with semaphore:
+                try:
+                    channel = await get_panel_channel(panel["channel_id"])
+                    if channel is None:
+                        stale_panels[guild_id] = panel
+                        return
+
+                    await edit_panel_message(channel, panel["message_id"], embed)
+                except discord.NotFound:
+                    stale_panels[guild_id] = panel
+                except discord.Forbidden:
+                    logger.warning(f"No permission to edit panel in guild {guild_id}")
+                except discord.HTTPException as he:
+                    logger.warning(f"HTTP error updating panel in guild {guild_id}: {he}")
+                except Exception as e:
+                    logger.warning(f"Panel update failure guild={guild_id}: {e}")
+
+        await asyncio.gather(*(update_one_panel(guild_id, panel) for guild_id, panel in guild_cfg.items()))
+
+        if stale_panels:
+            removed = await GUILD_CONFIG_STORE.remove_matching(stale_panels)
+            if removed:
+                logger.info("Cleaned up %d stale guild panels", removed)
 
 
 # -----------------------
@@ -557,9 +706,7 @@ async def prefix_set_event_panel(ctx: commands.Context):
     embed = await build_active_events_embed()
     msg = await ctx.channel.send(embed=embed)
 
-    gid = str(ctx.guild.id)
-    GUILD_CFG[gid] = {"channel_id": ctx.channel.id, "message_id": msg.id}
-    save_guild_cfg(GUILD_CFG)
+    await GUILD_CONFIG_STORE.set_panel(ctx.guild.id, ctx.channel.id, msg.id)
 
     await ctx.reply("Live events panel configured for this server.", mention_author=False)
 
@@ -570,9 +717,7 @@ async def prefix_remove_event_panel(ctx: commands.Context):
     if not ctx.guild:
         return
 
-    gid = str(ctx.guild.id)
-    existed = GUILD_CFG.pop(gid, None)
-    save_guild_cfg(GUILD_CFG)
+    existed = await GUILD_CONFIG_STORE.remove_panel(ctx.guild.id)
 
     await ctx.reply(
         "Panel configuration removed." if existed else "No panel was configured for this server.",
@@ -654,9 +799,7 @@ async def slash_set_event_panel(interaction: discord.Interaction):
     except discord.Forbidden:
         return await interaction.followup.send("I don't have permission to post in this channel.", ephemeral=True)
 
-    gid = str(interaction.guild.id)
-    GUILD_CFG[gid] = {"channel_id": interaction.channel.id, "message_id": msg.id}
-    save_guild_cfg(GUILD_CFG)
+    await GUILD_CONFIG_STORE.set_panel(interaction.guild.id, interaction.channel.id, msg.id)
 
     await interaction.followup.send("Live events panel configured for this server.", ephemeral=True)
 
@@ -669,9 +812,7 @@ async def slash_remove_event_panel(interaction: discord.Interaction):
     if not interaction.guild:
         return await interaction.followup.send("This command must be used in a server.", ephemeral=True)
 
-    gid = str(interaction.guild.id)
-    existed = GUILD_CFG.pop(gid, None)
-    save_guild_cfg(GUILD_CFG)
+    existed = await GUILD_CONFIG_STORE.remove_panel(interaction.guild.id)
 
     await interaction.followup.send(
         "Panel configuration removed." if existed else "No panel was configured for this server.",
