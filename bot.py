@@ -32,13 +32,17 @@ def get_env_int(name: str, default: int, minimum: int = 1) -> int:
     try:
         return max(minimum, int(raw_value))
     except ValueError:
-        logger.warning("%s must be an integer, got %r. Using %d.", name, raw_value, default)
+        logger.warning(
+            "%s must be an integer, got %r. Using %d.", name, raw_value, default
+        )
         return default
 
 
 # ---- CONFIG ----
 TOKEN = os.getenv("DISCORD_TOKEN", "REPLACE_ME_REGEN_TOKEN_NOW")
-BLUEPRINTS_CSV_PATH = os.getenv("BLUEPRINTS_CSV_PATH", "./arc_raiders_blueprints_final.csv")
+BLUEPRINTS_CSV_PATH = os.getenv(
+    "BLUEPRINTS_CSV_PATH", "./arc_raiders_blueprints_final.csv"
+)
 CONFIG_PATH = os.getenv("GUILD_CONFIG_PATH", "./guild_config.json")
 PANEL_UPDATE_CONCURRENCY = get_env_int("PANEL_UPDATE_CONCURRENCY", 8)
 
@@ -177,7 +181,9 @@ class GuildConfigStore:
 
         normalized = normalize_guild_cfg(data)
         if isinstance(data, dict) and len(normalized) != len(data):
-            logger.warning("Skipped malformed guild panel entries while reading %s", self.path)
+            logger.warning(
+                "Skipped malformed guild panel entries while reading %s", self.path
+            )
         return normalized
 
     def _write_unlocked(self, cfg: dict[str, dict[str, int]]):
@@ -207,7 +213,10 @@ class GuildConfigStore:
         async with self._lock:
             with self._file_lock():
                 cfg = self._read_unlocked()
-                cfg[str(guild_id)] = {"channel_id": channel_id, "message_id": message_id}
+                cfg[str(guild_id)] = {
+                    "channel_id": channel_id,
+                    "message_id": message_id,
+                }
                 self._write_unlocked(cfg)
 
     async def remove_panel(self, guild_id: int) -> bool:
@@ -242,7 +251,9 @@ GUILD_CONFIG_STORE = GuildConfigStore(CONFIG_PATH)
 
 
 # ---- HTTP ----
-async def fetch_json(session: aiohttp.ClientSession, url: str, params: dict | None = None):
+async def fetch_json(
+    session: aiohttp.ClientSession, url: str, params: dict | None = None
+):
     async with session.get(url, params=params) as resp:
         if resp.status != 200:
             text = await resp.text()
@@ -254,7 +265,9 @@ async def fetch_json(session: aiohttp.ClientSession, url: str, params: dict | No
 async def load_items_all_pages(limit: int = 50) -> list[dict]:
     all_items: list[dict] = []
     async with aiohttp.ClientSession() as session:
-        first = await fetch_json(session, f"{API_BASE}/items", params={"page": 1, "limit": limit})
+        first = await fetch_json(
+            session, f"{API_BASE}/items", params={"page": 1, "limit": limit}
+        )
         first_data = first.get("data", first)
         if not isinstance(first_data, list):
             raise RuntimeError("Unexpected /items shape (expected data:list)")
@@ -264,7 +277,9 @@ async def load_items_all_pages(limit: int = 50) -> list[dict]:
         total_pages = int(pagination.get("totalPages") or 1)
 
         for page in range(2, total_pages + 1):
-            payload = await fetch_json(session, f"{API_BASE}/items", params={"page": page, "limit": limit})
+            payload = await fetch_json(
+                session, f"{API_BASE}/items", params={"page": page, "limit": limit}
+            )
             page_data = payload.get("data", payload)
             if not isinstance(page_data, list):
                 raise RuntimeError(f"Unexpected /items page {page} shape")
@@ -356,7 +371,9 @@ def load_blueprints_csv(path: str) -> dict[str, BlueprintInfo]:
                 quest_reward=_clean(row.get("QuestReward")),
                 trials_reward=_clean(row.get("TrialsReward")),
                 container_type_assumed=_clean(row.get("ContainerTypeAssumed")),
-                drop_rate_per_container=_to_float(row.get("DropRateEstimate_PerContainer") or ""),
+                drop_rate_per_container=_to_float(
+                    row.get("DropRateEstimate_PerContainer") or ""
+                ),
                 avg_raids_6=_to_float(row.get("AvgRaidsEstimate_6Containers") or ""),
                 avg_raids_9=_to_float(row.get("AvgRaidsEstimate_9Containers") or ""),
                 notes=_clean(row.get("Notes")),
@@ -471,14 +488,16 @@ class BlueprintView(discord.ui.View):
         if info:
             add_field_if(embed, "Found / how", format_found(info), inline=False)
             add_field_if(embed, "Where to farm", format_routes(info), inline=False)
-            add_field_if(embed, "Craft materials", info.crafting_materials, inline=False)
+            add_field_if(
+                embed, "Craft materials", info.crafting_materials, inline=False
+            )
             add_field_if(embed, "Workshop level", info.workshop_level, inline=True)
 
         if not embed.description and not embed.fields:
             embed.description = "No intel available for this blueprint."
 
         embed.set_footer(
-            text=f"{self.idx+1}/{len(self.blueprint_names)} • Community-maintained data; verify in-game"
+            text=f"{self.idx + 1}/{len(self.blueprint_names)} • Community-maintained data; verify in-game"
         )
         return embed
 
@@ -496,6 +515,7 @@ class BlueprintView(discord.ui.View):
 def owner_only_appcmd():
     async def predicate(interaction: discord.Interaction) -> bool:
         return await interaction.client.is_owner(interaction.user)  # type: ignore
+
     return discord.app_commands.check(predicate)
 
 
@@ -503,7 +523,9 @@ class ArcSpyBot(commands.Bot):
     async def setup_hook(self) -> None:
         try:
             synced = await self.tree.sync()
-            logger.info("Synced %d global commands: %s", len(synced), [c.name for c in synced])
+            logger.info(
+                "Synced %d global commands: %s", len(synced), [c.name for c in synced]
+            )
         except Exception as e:
             logger.error(f"Global command sync failed: {e}")
 
@@ -544,7 +566,9 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
         return
 
     err = error
-    if isinstance(error, commands.CommandInvokeError) and getattr(error, "original", None):
+    if isinstance(error, commands.CommandInvokeError) and getattr(
+        error, "original", None
+    ):
         err = error.original
 
     logger.error(
@@ -560,7 +584,9 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
 
 # ---- SLASH COMMAND ERROR LOGGING ----
 @bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+async def on_app_command_error(
+    interaction: discord.Interaction, error: discord.app_commands.AppCommandError
+):
     logger.error(
         "Slash command error: user=%s guild=%s channel=%s error=%s",
         getattr(interaction.user, "id", None),
@@ -568,7 +594,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
         getattr(getattr(interaction, "channel", None), "id", None),
         repr(error),
     )
-    logger.error("".join(traceback.format_exception(type(error), error, error.__traceback__)))
+    logger.error(
+        "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    )
 
 
 def item_display(name: str) -> str:
@@ -624,7 +652,9 @@ async def build_active_events_embed() -> discord.Embed:
 
             embed.add_field(name=mp, value="\n".join(lines), inline=False)
     else:
-        embed.description = f"No events active • Updated <t:{now_unix}:F> (<t:{now_unix}:R>)"
+        embed.description = (
+            f"No events active • Updated <t:{now_unix}:F> (<t:{now_unix}:R>)"
+        )
 
     embed.set_footer(text="Event blueprint list is curated; verify drops in-game")
     return embed
@@ -682,11 +712,18 @@ async def update_event_panels():
                 except discord.Forbidden:
                     logger.warning(f"No permission to edit panel in guild {guild_id}")
                 except discord.HTTPException as he:
-                    logger.warning(f"HTTP error updating panel in guild {guild_id}: {he}")
+                    logger.warning(
+                        f"HTTP error updating panel in guild {guild_id}: {he}"
+                    )
                 except Exception as e:
                     logger.warning(f"Panel update failure guild={guild_id}: {e}")
 
-        await asyncio.gather(*(update_one_panel(guild_id, panel) for guild_id, panel in guild_cfg.items()))
+        await asyncio.gather(
+            *(
+                update_one_panel(guild_id, panel)
+                for guild_id, panel in guild_cfg.items()
+            )
+        )
 
         if stale_panels:
             removed = await GUILD_CONFIG_STORE.remove_matching(stale_panels)
@@ -708,7 +745,9 @@ async def prefix_set_event_panel(ctx: commands.Context):
 
     await GUILD_CONFIG_STORE.set_panel(ctx.guild.id, ctx.channel.id, msg.id)
 
-    await ctx.reply("Live events panel configured for this server.", mention_author=False)
+    await ctx.reply(
+        "Live events panel configured for this server.", mention_author=False
+    )
 
 
 @bot.command(name="remove_event_panel")
@@ -720,7 +759,9 @@ async def prefix_remove_event_panel(ctx: commands.Context):
     existed = await GUILD_CONFIG_STORE.remove_panel(ctx.guild.id)
 
     await ctx.reply(
-        "Panel configuration removed." if existed else "No panel was configured for this server.",
+        "Panel configuration removed."
+        if existed
+        else "No panel was configured for this server.",
         mention_author=False,
     )
 
@@ -730,7 +771,9 @@ async def prefix_blueprints(ctx: commands.Context):
     if not BP_DB:
         return await ctx.reply("Blueprint data is not loaded.", mention_author=False)
 
-    blueprint_names = sorted((bp.name for bp in BP_DB.values()), key=lambda s: s.lower())
+    blueprint_names = sorted(
+        (bp.name for bp in BP_DB.values()), key=lambda s: s.lower()
+    )
     view = BlueprintView(blueprint_names, author_id=ctx.author.id)
     await ctx.reply(embed=view.embed(), view=view, mention_author=False)
 
@@ -759,10 +802,24 @@ async def prefix_refresh_cache(ctx: commands.Context):
 @bot.command(name="help")
 async def prefix_help(ctx: commands.Context):
     embed = discord.Embed(title="ARC SPY — Commands", color=0x00FF00)
-    embed.add_field(name="A$set_event_panel", value="Create or move the live events panel to this channel.", inline=False)
-    embed.add_field(name="A$remove_event_panel", value="Remove this server's live events panel configuration.", inline=False)
-    embed.add_field(name="A$blueprints", value="Browse blueprint intel (one per page).", inline=False)
-    embed.add_field(name="A$help-own", value="Owner-only: show owner commands.", inline=False)
+    embed.add_field(
+        name="A$set_event_panel",
+        value="Create or move the live events panel to this channel.",
+        inline=False,
+    )
+    embed.add_field(
+        name="A$remove_event_panel",
+        value="Remove this server's live events panel configuration.",
+        inline=False,
+    )
+    embed.add_field(
+        name="A$blueprints",
+        value="Browse blueprint intel (one per page).",
+        inline=False,
+    )
+    embed.add_field(
+        name="A$help-own", value="Owner-only: show owner commands.", inline=False
+    )
     embed.add_field(
         name="Support",
         value="Patreon: https://patreon.com/connorbotboi?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink",
@@ -776,46 +833,74 @@ async def prefix_help(ctx: commands.Context):
 @commands.is_owner()
 async def prefix_help_own(ctx: commands.Context):
     embed = discord.Embed(title="ARC SPY — Owner Commands", color=0xF6AD55)
-    embed.add_field(name="A$update_events", value="Owner-only: refresh live panels now.", inline=False)
-    embed.add_field(name="A$reload_blueprints", value="Owner-only: reload blueprint intel.", inline=False)
-    embed.add_field(name="A$refresh_cache", value="Owner-only: refresh item metadata.", inline=False)
+    embed.add_field(
+        name="A$update_events",
+        value="Owner-only: refresh live panels now.",
+        inline=False,
+    )
+    embed.add_field(
+        name="A$reload_blueprints",
+        value="Owner-only: reload blueprint intel.",
+        inline=False,
+    )
+    embed.add_field(
+        name="A$refresh_cache", value="Owner-only: refresh item metadata.", inline=False
+    )
     await ctx.reply(embed=embed, mention_author=False)
 
 
 # -----------------------
 # Slash commands (/...)
 # -----------------------
-@bot.tree.command(name="set_event_panel", description="Create or move the live events panel to this channel")
+@bot.tree.command(
+    name="set_event_panel",
+    description="Create or move the live events panel to this channel",
+)
 @discord.app_commands.default_permissions(manage_guild=True)
 async def slash_set_event_panel(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     if not interaction.guild or not interaction.channel:
-        return await interaction.followup.send("This command must be used in a server channel.", ephemeral=True)
+        return await interaction.followup.send(
+            "This command must be used in a server channel.", ephemeral=True
+        )
 
     embed = await build_active_events_embed()
     try:
         msg = await interaction.channel.send(embed=embed)
     except discord.Forbidden:
-        return await interaction.followup.send("I don't have permission to post in this channel.", ephemeral=True)
+        return await interaction.followup.send(
+            "I don't have permission to post in this channel.", ephemeral=True
+        )
 
-    await GUILD_CONFIG_STORE.set_panel(interaction.guild.id, interaction.channel.id, msg.id)
+    await GUILD_CONFIG_STORE.set_panel(
+        interaction.guild.id, interaction.channel.id, msg.id
+    )
 
-    await interaction.followup.send("Live events panel configured for this server.", ephemeral=True)
+    await interaction.followup.send(
+        "Live events panel configured for this server.", ephemeral=True
+    )
 
 
-@bot.tree.command(name="remove_event_panel", description="Remove this server's live events panel configuration")
+@bot.tree.command(
+    name="remove_event_panel",
+    description="Remove this server's live events panel configuration",
+)
 @discord.app_commands.default_permissions(manage_guild=True)
 async def slash_remove_event_panel(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     if not interaction.guild:
-        return await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return await interaction.followup.send(
+            "This command must be used in a server.", ephemeral=True
+        )
 
     existed = await GUILD_CONFIG_STORE.remove_panel(interaction.guild.id)
 
     await interaction.followup.send(
-        "Panel configuration removed." if existed else "No panel was configured for this server.",
+        "Panel configuration removed."
+        if existed
+        else "No panel was configured for this server.",
         ephemeral=True,
     )
 
@@ -825,14 +910,20 @@ async def slash_blueprints(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     if not BP_DB:
-        return await interaction.followup.send("Blueprint data is not loaded.", ephemeral=True)
+        return await interaction.followup.send(
+            "Blueprint data is not loaded.", ephemeral=True
+        )
 
-    blueprint_names = sorted((bp.name for bp in BP_DB.values()), key=lambda s: s.lower())
+    blueprint_names = sorted(
+        (bp.name for bp in BP_DB.values()), key=lambda s: s.lower()
+    )
     view = BlueprintView(blueprint_names, author_id=interaction.user.id)
     await interaction.followup.send(embed=view.embed(), view=view, ephemeral=True)
 
 
-@bot.tree.command(name="update_events", description="Owner-only: refresh the live events panel now")
+@bot.tree.command(
+    name="update_events", description="Owner-only: refresh the live events panel now"
+)
 @owner_only_appcmd()
 async def slash_update_events(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -840,7 +931,9 @@ async def slash_update_events(interaction: discord.Interaction):
     await interaction.followup.send("Updated.", ephemeral=True)
 
 
-@bot.tree.command(name="reload_blueprints", description="Owner-only: reload blueprint intel from disk")
+@bot.tree.command(
+    name="reload_blueprints", description="Owner-only: reload blueprint intel from disk"
+)
 @owner_only_appcmd()
 async def slash_reload_blueprints(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -848,13 +941,17 @@ async def slash_reload_blueprints(interaction: discord.Interaction):
     await interaction.followup.send(f"Reloaded ({len(BP_DB)} entries).", ephemeral=True)
 
 
-@bot.tree.command(name="refresh_cache", description="Owner-only: refresh item metadata (icons/rarity)")
+@bot.tree.command(
+    name="refresh_cache", description="Owner-only: refresh item metadata (icons/rarity)"
+)
 @owner_only_appcmd()
 async def slash_refresh_cache(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     try:
         await refresh_item_cache()
-        await interaction.followup.send(f"Refreshed ({len(ITEMS_RAW)} items).", ephemeral=True)
+        await interaction.followup.send(
+            f"Refreshed ({len(ITEMS_RAW)} items).", ephemeral=True
+        )
     except Exception as e:
         await interaction.followup.send(f"Refresh failed: {e}", ephemeral=True)
 
@@ -862,11 +959,25 @@ async def slash_refresh_cache(interaction: discord.Interaction):
 @bot.tree.command(name="help", description="Show command reference")
 async def slash_help(interaction: discord.Interaction):
     embed = discord.Embed(title="ARC SPY — Commands", color=0x00FF00)
-    embed.add_field(name="/set_event_panel", value="Create or move the live events panel to this channel.", inline=False)
-    embed.add_field(name="/remove_event_panel", value="Remove this server's live events panel configuration.", inline=False)
-    embed.add_field(name="/blueprints", value="Browse blueprint intel (one per page).", inline=False)
-    embed.add_field(name="/help-own", value="Owner-only: show owner commands.", inline=False)
-    embed.add_field(name="Prefix", value="Also available with: A$ (case-insensitive).", inline=False)
+    embed.add_field(
+        name="/set_event_panel",
+        value="Create or move the live events panel to this channel.",
+        inline=False,
+    )
+    embed.add_field(
+        name="/remove_event_panel",
+        value="Remove this server's live events panel configuration.",
+        inline=False,
+    )
+    embed.add_field(
+        name="/blueprints", value="Browse blueprint intel (one per page).", inline=False
+    )
+    embed.add_field(
+        name="/help-own", value="Owner-only: show owner commands.", inline=False
+    )
+    embed.add_field(
+        name="Prefix", value="Also available with: A$ (case-insensitive).", inline=False
+    )
     embed.add_field(
         name="Support",
         value="Patreon: https://patreon.com/connorbotboi?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink",
@@ -876,13 +987,25 @@ async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="help-own", description="Owner-only: show owner command reference")
+@bot.tree.command(
+    name="help-own", description="Owner-only: show owner command reference"
+)
 @owner_only_appcmd()
 async def slash_help_own(interaction: discord.Interaction):
     embed = discord.Embed(title="ARC SPY — Owner Commands", color=0xF6AD55)
-    embed.add_field(name="/update_events", value="Owner-only: refresh live panels now.", inline=False)
-    embed.add_field(name="/reload_blueprints", value="Owner-only: reload blueprint intel.", inline=False)
-    embed.add_field(name="/refresh_cache", value="Owner-only: refresh item metadata.", inline=False)
+    embed.add_field(
+        name="/update_events",
+        value="Owner-only: refresh live panels now.",
+        inline=False,
+    )
+    embed.add_field(
+        name="/reload_blueprints",
+        value="Owner-only: reload blueprint intel.",
+        inline=False,
+    )
+    embed.add_field(
+        name="/refresh_cache", value="Owner-only: refresh item metadata.", inline=False
+    )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
