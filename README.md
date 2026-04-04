@@ -99,7 +99,7 @@ Prefix: `A$`
 
 ### `guild_config.json`
 Created/updated automatically.
-Writes are atomic and lock-protected so concurrent updates do not clobber each other.
+Writes are atomic. On POSIX systems they are also lock-protected; on Windows, treat config updates as single-process only because cross-process file locking is not provided.
 Format:
 ```json
 {
