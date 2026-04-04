@@ -718,13 +718,26 @@ async def update_event_panels():
                 except Exception as e:
                     logger.warning(f"Panel update failure guild={guild_id}: {e}")
 
-        await asyncio.gather(
-            *(
-                update_one_panel(guild_id, panel)
-                for guild_id, panel in guild_cfg.items()
-            )
-        )
+        queue: asyncio.Queue[tuple[str, dict[str, int]]] = asyncio.Queue()
+        for guild_id, panel in guild_cfg.items():
+            queue.put_nowait((guild_id, panel))
 
+        async def worker():
+            while True:
+                guild_id, panel = await queue.get()
+                try:
+                    await update_one_panel(guild_id, panel)
+                finally:
+                    queue.task_done()
+
+        worker_count = min(PANEL_UPDATE_CONCURRENCY, len(guild_cfg))
+        workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
+        try:
+            await queue.join()
+        finally:
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
         if stale_panels:
             removed = await GUILD_CONFIG_STORE.remove_matching(stale_panels)
             if removed:
