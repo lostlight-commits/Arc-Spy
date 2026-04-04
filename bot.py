@@ -667,8 +667,15 @@ async def get_panel_channel(channel_id: int):
 
     try:
         return await bot.fetch_channel(channel_id)
-    except (discord.NotFound, discord.Forbidden):
+    except discord.NotFound:
         return None
+    except discord.Forbidden as e:
+        logger.warning(
+            "Forbidden fetching panel channel %s; keeping config and skipping stale removal: %s",
+            channel_id,
+            e,
+        )
+        return bot.get_partial_messageable(channel_id)
     except discord.HTTPException as e:
         logger.warning("HTTP error fetching panel channel %s: %s", channel_id, e)
         return None
